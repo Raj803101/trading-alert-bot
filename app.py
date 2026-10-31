@@ -7,13 +7,13 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Supertrend Bot is Running 24/7!"
+    return "Delta Exchange Supertrend Bot is Running 24/7!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
 CHANNEL_ID = "@theshopcare"
-SYMBOL = "BTCUSDT"
-INTERVAL = "5m"
+SYMBOL = "BTCUSD"        # Delta Exchange BTC contract
+RESOLUTION = "5m"        # 5-minute timeframe
 PERIOD = 10
 MULTIPLIER = 3.0
 # =================================================
@@ -26,15 +26,24 @@ def send_telegram_alert(message):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-def get_klines():
-    url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit=100"
+def get_delta_klines():
+    # Delta Exchange Public Candlestick API
+    now = int(time.time())
+    start = now - (100 * 300)  # 100 candles of 5m
+    url = f"https://api.delta.exchange/v2/history/candles?resolution={RESOLUTION}&symbol={SYMBOL}&start={start}&end={now}"
+    
     res = requests.get(url, timeout=10).json()
+    result = res.get('result', [])
+    
+    # Delta data reverse order me deta hai, ise chronological sort karte hain
+    result = sorted(result, key=lambda x: x['time'])
+    
     candles = []
-    for k in res:
+    for c in result:
         candles.append({
-            'high': float(k[2]),
-            'low': float(k[3]),
-            'close': float(k[4])
+            'high': float(c['high']),
+            'low': float(c['low']),
+            'close': float(c['close'])
         })
     return candles
 
@@ -105,21 +114,21 @@ def get_supertrend_direction(candles):
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print("Bot loop started...")
-    send_telegram_alert("🚀 Supertrend Bot Hosted on Render Successfully!")
+    print("Delta Bot loop started...")
+    send_telegram_alert("🚀 Supertrend Bot (Delta Exchange) Hosted Successfully!")
     last_trend = None
 
     while True:
         try:
-            candles = get_klines()
+            candles = get_delta_klines()
             current_trend, current_close = get_supertrend_direction(candles)
 
             if current_trend is not None:
                 if last_trend is not None and current_trend != last_trend:
                     if current_trend:
-                        msg = f"🟢 SUPERTREND BUY SIGNAL\nPair: {SYMBOL}\nInterval: {INTERVAL}\nPrice: {current_close}"
+                        msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: {SYMBOL}\nInterval: {RESOLUTION}\nPrice: {current_close}"
                     else:
-                        msg = f"🔴 SUPERTREND SELL SIGNAL\nPair: {SYMBOL}\nInterval: {INTERVAL}\nPrice: {current_close}"
+                        msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: {SYMBOL}\nInterval: {RESOLUTION}\nPrice: {current_close}"
                     send_telegram_alert(msg)
 
                 last_trend = current_trend
