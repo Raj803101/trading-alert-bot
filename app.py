@@ -1,7 +1,6 @@
 import time
 import threading
 import requests
-import sys
 from flask import Flask
 
 app = Flask(__name__)
@@ -13,8 +12,8 @@ def home():
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
 CHANNEL_ID = "@theshopcare"
-SYMBOL = "BTCUSD"
-RESOLUTION = "5m"
+SYMBOL = "BTCUSDT"       # Delta Exchange standard perpetual symbol
+RESOLUTION = "5m"       # 5m timeframe
 PERIOD = 10
 MULTIPLIER = 3.0
 # =================================================
@@ -30,28 +29,41 @@ def send_telegram_alert(message):
 
 def get_delta_klines():
     now = int(time.time())
-    start = now - (100 * 300)
-    url = f"https://api.delta.exchange/v2/history/candles?resolution={RESOLUTION}&symbol={SYMBOL}&start={start}&end={now}"
+    start = now - (120 * 300)
     
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers, timeout=10).json()
-    result = res.get('result', [])
+    # Delta Exchange public candles endpoint with fallback
+    urls = [
+        f"https://api.delta.exchange/v2/history/candles?resolution={RESOLUTION}&symbol={SYMBOL}&start={start}&end={now}",
+        f"https://api.delta.exchange/v2/history/candles?resolution={RESOLUTION}&symbol=BTCUSD&start={start}&end={now}"
+    ]
     
-    if not result:
-        return []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json"
+    }
 
-    # Sort chronological
-    result = sorted(result, key=lambda x: x['time'])
-    
-    candles = []
-    for c in result:
-        candles.append({
-            'time': c.get('time'),
-            'high': float(c['high']),
-            'low': float(c['low']),
-            'close': float(c['close'])
-        })
-    return candles
+    for url in urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                result = data.get('result', [])
+                if result and len(result) > 0:
+                    # Time ke hisab se sort karein
+                    result = sorted(result, key=lambda x: x['time'])
+                    candles = []
+                    for c in result:
+                        candles.append({
+                            'time': c.get('time'),
+                            'high': float(c['high']),
+                            'low': float(c['low']),
+                            'close': float(c['close'])
+                        })
+                    return candles
+        except Exception as e:
+            print(f"API Fetch Error: {e}", flush=True)
+
+    return []
 
 def get_supertrend_direction(candles):
     if len(candles) < PERIOD + 2:
@@ -120,8 +132,8 @@ def get_supertrend_direction(candles):
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Delta Bot Loop Started <<<", flush=True)
-    send_telegram_alert("🟢 Delta Bot Active & Monitoring Signals!")
+    print(">>> Delta Bot Loop Running <<<", flush=True)
+    send_telegram_alert("🟢 Delta Bot Engine Updated & Active!")
     
     last_trend = None
     last_candle_time = None
@@ -133,7 +145,6 @@ def run_bot():
                 current_candle_time = candles[-2]['time']
                 current_trend, current_close = get_supertrend_direction(candles)
 
-                # Jab new closed candle aaye
                 if current_candle_time != last_candle_time:
                     last_candle_time = current_candle_time
                     trend_str = "BUY (Green)" if current_trend else "SELL (Red)"
@@ -141,9 +152,9 @@ def run_bot():
 
                     if last_trend is not None and current_trend != last_trend:
                         if current_trend:
-                            msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: {SYMBOL}\nInterval: {RESOLUTION}\nPrice: {current_close}"
+                            msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: BTCUSDT\nInterval: {RESOLUTION}\nPrice: {current_close}"
                         else:
-                            msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: {SYMBOL}\nInterval: {RESOLUTION}\nPrice: {current_close}"
+                            msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: BTCUSDT\nInterval: {RESOLUTION}\nPrice: {current_close}"
                         print(f"Triggering Alert: {msg}", flush=True)
                         send_telegram_alert(msg)
 
@@ -156,9 +167,7 @@ def run_bot():
 
         time.sleep(20)
 
-# Thread start
-bot_thread = threading.Thread(target=run_bot, daemon=True)
-bot_thread.start()
+threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
