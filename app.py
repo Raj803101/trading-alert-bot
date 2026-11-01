@@ -15,10 +15,9 @@ CHANNEL_ID = "@theshopcare"
 PERIOD = 10
 MULTIPLIER = 3.0
 
-# Delta Contract symbols match exactly to chart
 PAIRS = [
-    {"symbol": "BTCUSD", "resolution": "5m"},
-    {"symbol": "XRPUSD", "resolution": "10m"}
+    {"name": "BTC", "delta_symbol": "BTCUSD", "binance_symbol": "BTCUSDT", "resolution": "5m", "res_sec": 300},
+    {"name": "XRP", "delta_symbol": "XRPUSD", "binance_symbol": "XRPUSDT", "resolution": "10m", "res_sec": 600}
 ]
 # =================================================
 
@@ -27,44 +26,44 @@ def send_telegram_alert(message):
     payload = {"chat_id": CHANNEL_ID, "text": message}
     try:
         res = requests.post(url, json=payload, timeout=10)
-        print(f"Telegram sent: {res.status_code}", flush=True)
+        print(f"Telegram alert sent: {res.status_code}", flush=True)
     except Exception as e:
         print(f"Telegram error: {e}", flush=True)
 
-def get_delta_klines(symbol, resolution):
+def fetch_candles(pair):
     now = int(time.time())
-    res_seconds = 300 if resolution == "5m" else 600
-    # Supertrend warmup ke liye 250 candles
-    start = now - (250 * res_seconds)
+    start = now - (150 * pair["res_sec"])
+    headers = {"User-Agent": "Mozilla/5.0"}
     
-    url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept": "application/json"
-    }
-
+    # 1. Primary: Delta Exchange
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            result = res.json().get('result', [])
-            if result:
-                result = sorted(result, key=lambda x: x['time'])
-                candles = []
-                for c in result:
-                    candles.append({
-                        'time': c.get('time'),
-                        'high': float(c['high']),
-                        'low': float(c['low']),
-                        'close': float(c['close'])
-                    })
-                return candles
+        url = f"https://api.delta.exchange/v2/history/candles?resolution={pair['resolution']}&symbol={pair['delta_symbol']}&start={start}&end={now}"
+        r = requests.get(url, headers=headers, timeout=8).json()
+        result = r.get("result", [])
+        if result and len(result) >= PERIOD + 5:
+            result = sorted(result, key=lambda x: x["time"])
+            candles = [{"time": c["time"], "high": float(c["high"]), "low": float(c["low"]), "close": float(c["close"])} for c in result]
+            return candles, "Delta"
     except Exception as e:
-        print(f"Fetch Error ({symbol}): {e}", flush=True)
+        print(f"Delta fetch err ({pair['name']}): {e}", flush=True)
 
-    return []
+    # 2. Backup: Binance API (agar Delta response delay kare)
+    try:
+        binance_interval = "5m" if pair["resolution"] == "5m" else "15m"
+        url = f"https://api.binance.com/api/v3/klines?symbol={pair['binance_symbol']}&interval={binance_interval}&limit=120"
+        r = requests.get(url, timeout=8).json()
+        if isinstance(r, list) and len(r) >= PERIOD + 5:
+            candles = [{"time": int(c[0]/1000), "high": float(c[2]), "low": float(c[3]), "close": float(c[4])} for c in r]
+            return candles, "Binance-Mirror"
+    except Exception as e:
+        print(f"Backup fetch err ({pair['name']}): {e}", flush=True)
 
-def calculate_wilder_atr(candles, period):
+    return [], "None"
+
+def calculate_supertrend(candles):
+    if len(candles) < PERIOD + 2:
+        return None, None
+
     # True Range (TR)
     tr_list = []
     for i in range(len(candles)):
@@ -77,105 +76,83 @@ def calculate_wilder_atr(candles, period):
             tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
             tr_list.append(tr)
 
-    # Wilder's Smoothing (RMA) - TradingView native formula
+    # Wilder's RMA (TradingView Exact ATR)
     atr = [0.0] * len(candles)
-    if len(candles) <= period:
-        return atr
+    atr[PERIOD - 1] = sum(tr_list[:PERIOD]) / PERIOD
+    for i in range(PERIOD, len(candles)):
+        atr[i] = (atr[i - 1] * (PERIOD - 1) + tr_list[i]) / PERIOD
 
-    # First ATR is simple SMA
-    atr[period - 1] = sum(tr_list[:period]) / period
-    for i in range(period, len(candles)):
-        atr[i] = (atr[i - 1] * (period - 1) + tr_list[i]) / period
-
-    return atr
-
-def get_supertrend_direction(candles):
-    if len(candles) < PERIOD + 20:
-        return None, None
-
-    atr = calculate_wilder_atr(candles, PERIOD)
     n = len(candles)
-
     upperbands = [0.0] * n
     lowerbands = [0.0] * n
     trend = [True] * n
 
-    start_idx = PERIOD
-    for i in range(start_idx, n):
+    for i in range(PERIOD, n):
         h = candles[i]['high']
         l = candles[i]['low']
         c = candles[i]['close']
         hl2 = (h + l) / 2.0
 
-        basic_ub = hl2 + (MULTIPLIER * atr[i])
-        basic_lb = hl2 - (MULTIPLIER * atr[i])
+        ub = hl2 + (MULTIPLIER * atr[i])
+        lb = hl2 - (MULTIPLIER * atr[i])
 
         prev_ub = upperbands[i - 1]
         prev_lb = lowerbands[i - 1]
 
-        # Upper band adjustment
-        if basic_ub < prev_ub or candles[i - 1]['close'] > prev_ub:
-            upperbands[i] = basic_ub
+        if ub < prev_ub or candles[i - 1]['close'] > prev_ub:
+            upperbands[i] = ub
         else:
             upperbands[i] = prev_ub
 
-        # Lower band adjustment
-        if basic_lb > prev_lb or candles[i - 1]['close'] < prev_lb:
-            lowerbands[i] = basic_lb
+        if lb > prev_lb or candles[i - 1]['close'] < prev_lb:
+            lowerbands[i] = lb
         else:
             lowerbands[i] = prev_lb
 
-        # Direction flip
         if trend[i - 1]:
-            if c < lowerbands[i]:
-                trend[i] = False
-            else:
-                trend[i] = True
+            trend[i] = False if c < lowerbands[i] else True
         else:
-            if c > upperbands[i]:
-                trend[i] = True
-            else:
-                trend[i] = False
+            trend[i] = True if c > upperbands[i] else False
 
-    # Return completed/closed candle [-2]
+    # Completed candle (-2)
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Native Delta Supertrend Bot Running <<<", flush=True)
-    send_telegram_alert("🟢 Delta Supertrend Calibrated to Native TV Formula!")
+    print(">>> Supertrend Background Worker Started <<<", flush=True)
+    send_telegram_alert("🟢 Delta Supertrend Engine Active & Watching Candles!")
     
     last_trends = {}
     last_candle_times = {}
 
     while True:
         for pair in PAIRS:
-            sym = pair["symbol"]
-            res = pair["resolution"]
-            pair_key = f"{sym}_{res}"
-
+            pair_key = pair["name"]
             try:
-                candles = get_delta_klines(sym, res)
-                if candles and len(candles) >= PERIOD + 20:
+                candles, source = fetch_candles(pair)
+                if candles:
                     current_candle_time = candles[-2]['time']
-                    current_trend, current_close = get_supertrend_direction(candles)
+                    current_trend, current_close = calculate_supertrend(candles)
 
                     if last_candle_times.get(pair_key) != current_candle_time:
                         last_candle_times[pair_key] = current_candle_time
-                        trend_str = "BUY (Green)" if current_trend else "SELL (Red)"
-                        print(f"[{sym} {res}] Close: {current_close} | Supertrend: {trend_str}", flush=True)
+                        trend_label = "BUY (Green)" if current_trend else "SELL (Red)"
+                        print(f"[{pair_key} - {pair['resolution']}] Source: {source} | Price: {current_close} | Trend: {trend_label}", flush=True)
 
                         prev_trend = last_trends.get(pair_key)
                         if prev_trend is not None and current_trend != prev_trend:
                             if current_trend:
-                                msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {res}\nPrice: {current_close}"
+                                msg = f"🟢 SUPERTREND BUY SIGNAL\nAsset: {pair['name']}\nInterval: {pair['resolution']}\nPrice: {current_close}"
                             else:
-                                msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {res}\nPrice: {current_close}"
-                            print(f"Triggering Alert: {msg}", flush=True)
+                                msg = f"🔴 SUPERTREND SELL SIGNAL\nAsset: {pair['name']}\nInterval: {pair['resolution']}\nPrice: {current_close}"
+                            
+                            print(f">>> ALERT FIRED: {msg} <<<", flush=True)
                             send_telegram_alert(msg)
 
                         last_trends[pair_key] = current_trend
+                else:
+                    print(f"Warning: No data for {pair_key}", flush=True)
             except Exception as e:
-                print(f"Loop error on {sym}: {e}", flush=True)
+                print(f"Loop error on {pair_key}: {e}", flush=True)
 
             time.sleep(2)
 
