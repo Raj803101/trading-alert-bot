@@ -15,10 +15,10 @@ CHANNEL_ID = "@theshopcare"
 PERIOD = 10
 MULTIPLIER = 3.0
 
-# Watchlist: BTC (5m) aur XRP (10m)
+# Delta Contract symbols match exactly to chart
 PAIRS = [
-    {"symbol": "BTCUSDT", "resolution": "5m", "alt_symbol": "BTCUSD"},
-    {"symbol": "XRPUSDT", "resolution": "10m", "alt_symbol": "XRPUSD"}
+    {"symbol": "BTCUSD", "resolution": "5m"},
+    {"symbol": "XRPUSD", "resolution": "10m"}
 ]
 # =================================================
 
@@ -31,47 +31,41 @@ def send_telegram_alert(message):
     except Exception as e:
         print(f"Telegram error: {e}", flush=True)
 
-def get_delta_klines(symbol, resolution, alt_symbol):
+def get_delta_klines(symbol, resolution):
     now = int(time.time())
     res_seconds = 300 if resolution == "5m" else 600
-    start = now - (120 * res_seconds)
+    # Supertrend warmup ke liye 250 candles
+    start = now - (250 * res_seconds)
     
-    urls = [
-        f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}",
-        f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={alt_symbol}&start={start}&end={now}"
-    ]
+    url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json"
     }
 
-    for url in urls:
-        try:
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                result = data.get('result', [])
-                if result and len(result) > 0:
-                    result = sorted(result, key=lambda x: x['time'])
-                    candles = []
-                    for c in result:
-                        candles.append({
-                            'time': c.get('time'),
-                            'high': float(c['high']),
-                            'low': float(c['low']),
-                            'close': float(c['close'])
-                        })
-                    return candles
-        except Exception as e:
-            print(f"API Fetch Error ({symbol}): {e}", flush=True)
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            result = res.json().get('result', [])
+            if result:
+                result = sorted(result, key=lambda x: x['time'])
+                candles = []
+                for c in result:
+                    candles.append({
+                        'time': c.get('time'),
+                        'high': float(c['high']),
+                        'low': float(c['low']),
+                        'close': float(c['close'])
+                    })
+                return candles
+    except Exception as e:
+        print(f"Fetch Error ({symbol}): {e}", flush=True)
 
     return []
 
-def get_supertrend_direction(candles):
-    if len(candles) < PERIOD + 2:
-        return None, None
-
+def calculate_wilder_atr(candles, period):
+    # True Range (TR)
     tr_list = []
     for i in range(len(candles)):
         h = candles[i]['high']
@@ -83,60 +77,72 @@ def get_supertrend_direction(candles):
             tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
             tr_list.append(tr)
 
-    atr_list = [0.0] * len(candles)
-    for i in range(PERIOD - 1, len(candles)):
-        atr_list[i] = sum(tr_list[i - PERIOD + 1:i + 1]) / PERIOD
+    # Wilder's Smoothing (RMA) - TradingView native formula
+    atr = [0.0] * len(candles)
+    if len(candles) <= period:
+        return atr
 
-    upperbands = [0.0] * len(candles)
-    lowerbands = [0.0] * len(candles)
-    trend = [True] * len(candles)
+    # First ATR is simple SMA
+    atr[period - 1] = sum(tr_list[:period]) / period
+    for i in range(period, len(candles)):
+        atr[i] = (atr[i - 1] * (period - 1) + tr_list[i]) / period
 
-    start_idx = PERIOD - 1
-    for i in range(start_idx, len(candles)):
+    return atr
+
+def get_supertrend_direction(candles):
+    if len(candles) < PERIOD + 20:
+        return None, None
+
+    atr = calculate_wilder_atr(candles, PERIOD)
+    n = len(candles)
+
+    upperbands = [0.0] * n
+    lowerbands = [0.0] * n
+    trend = [True] * n
+
+    start_idx = PERIOD
+    for i in range(start_idx, n):
         h = candles[i]['high']
         l = candles[i]['low']
         c = candles[i]['close']
-        atr = atr_list[i]
         hl2 = (h + l) / 2.0
 
-        ub = hl2 + (MULTIPLIER * atr)
-        lb = hl2 - (MULTIPLIER * atr)
-
-        if i == start_idx:
-            upperbands[i] = ub
-            lowerbands[i] = lb
-            trend[i] = True
-            continue
+        basic_ub = hl2 + (MULTIPLIER * atr[i])
+        basic_lb = hl2 - (MULTIPLIER * atr[i])
 
         prev_ub = upperbands[i - 1]
         prev_lb = lowerbands[i - 1]
 
-        if c > prev_ub:
-            upperbands[i] = ub
+        # Upper band adjustment
+        if basic_ub < prev_ub or candles[i - 1]['close'] > prev_ub:
+            upperbands[i] = basic_ub
         else:
-            upperbands[i] = min(ub, prev_ub)
+            upperbands[i] = prev_ub
 
-        if c < prev_lb:
-            lowerbands[i] = lb
+        # Lower band adjustment
+        if basic_lb > prev_lb or candles[i - 1]['close'] < prev_lb:
+            lowerbands[i] = basic_lb
         else:
-            lowerbands[i] = max(lb, prev_lb)
+            lowerbands[i] = prev_lb
 
-        if c > prev_ub:
-            trend[i] = True
-        elif c < prev_lb:
-            trend[i] = False
+        # Direction flip
+        if trend[i - 1]:
+            if c < lowerbands[i]:
+                trend[i] = False
+            else:
+                trend[i] = True
         else:
-            trend[i] = trend[i - 1]
-            if trend[i] and lowerbands[i] < prev_lb:
-                lowerbands[i] = prev_lb
-            if not trend[i] and upperbands[i] > prev_ub:
-                upperbands[i] = prev_ub
+            if c > upperbands[i]:
+                trend[i] = True
+            else:
+                trend[i] = False
 
+    # Return completed/closed candle [-2]
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Multi-Pair Bot Loop Running <<<", flush=True)
-    send_telegram_alert("🟢 Multi-Bot Active: Monitoring BTC (5m) & XRP (10m)!")
+    print(">>> Native Delta Supertrend Bot Running <<<", flush=True)
+    send_telegram_alert("🟢 Delta Supertrend Calibrated to Native TV Formula!")
     
     last_trends = {}
     last_candle_times = {}
@@ -145,12 +151,11 @@ def run_bot():
         for pair in PAIRS:
             sym = pair["symbol"]
             res = pair["resolution"]
-            alt_sym = pair["alt_symbol"]
             pair_key = f"{sym}_{res}"
 
             try:
-                candles = get_delta_klines(sym, res, alt_sym)
-                if candles and len(candles) >= PERIOD + 2:
+                candles = get_delta_klines(sym, res)
+                if candles and len(candles) >= PERIOD + 20:
                     current_candle_time = candles[-2]['time']
                     current_trend, current_close = get_supertrend_direction(candles)
 
