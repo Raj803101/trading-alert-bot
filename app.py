@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Delta Supertrend Live 24/7!"
+    return "Delta Supertrend TV-Synced Bot Running 24/7!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
@@ -40,7 +40,8 @@ def send_telegram_alert(message):
 
 def fetch_delta_candles(symbol_list, resolution, res_sec):
     now = int(time.time())
-    start = now - (60 * res_sec)
+    # 150 candles warmup: ATR/RMA line perfectly matches TradingView chart
+    start = now - (150 * res_sec)
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json"
@@ -57,8 +58,9 @@ def fetch_delta_candles(symbol_list, resolution, res_sec):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=8)
             if r.status_code == 200:
-                res = r.json().get("result", [])
-                if isinstance(res, list) and len(res) >= 20:
+                data = r.json()
+                res = data.get("result", [])
+                if isinstance(res, list) and len(res) >= 80:
                     res = sorted(res, key=lambda x: int(x["time"]))
                     return sym, [{
                         "time": int(c["time"]),
@@ -72,7 +74,7 @@ def fetch_delta_candles(symbol_list, resolution, res_sec):
     return None, []
 
 def calculate_supertrend(candles):
-    if len(candles) < PERIOD + 2:
+    if len(candles) < PERIOD + 20:
         return None, None
 
     # True Range (TR)
@@ -81,7 +83,7 @@ def calculate_supertrend(candles):
         h, l, pc = candles[i]['high'], candles[i]['low'], candles[i-1]['close']
         tr[i] = max(h - l, abs(h - pc), abs(l - pc))
 
-    # Wilder's Smoothing (TradingView Exact RMA)
+    # Wilder's Smoothing (Exact TradingView RMA Formula)
     atr = [0.0] * len(candles)
     atr[PERIOD] = sum(tr[1:PERIOD+1]) / PERIOD
     for i in range(PERIOD + 1, len(candles)):
@@ -105,12 +107,12 @@ def calculate_supertrend(candles):
         else:
             trend[i] = True if c > upperbands[i] else False
 
-    # Strictly Closed Candle [-2]
+    # Strictly signal on [-2] (Previous Closed Candle)
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Delta Engine Online (BTC 5m & SOL 15m) <<<", flush=True)
-    send_telegram_alert("🟢 Delta Bot Engine Synced & Active!")
+    print(">>> Delta Native Engine (TV-Synced 150 Candles) Online <<<", flush=True)
+    send_telegram_alert("🟢 Delta Bot Engine Active: Exact TradingView Level Sync!")
     
     last_trends = {}
     last_times = {}
@@ -137,7 +139,7 @@ def run_bot():
 
                         last_trends[p["name"]] = c_trend
             except Exception as e:
-                print(f"Loop Error ({p['name']}): {e}", flush=True)
+                print(f"Error ({p['name']}): {e}", flush=True)
             
             time.sleep(2)
         
