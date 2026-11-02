@@ -16,8 +16,8 @@ PERIOD = 10
 MULTIPLIER = 3.0
 
 PAIRS = [
-    {"name": "BTC", "symbol": "BTCUSD", "resolution": "5m", "res_sec": 300},
-    {"name": "XRP", "symbol": "XRPUSD", "resolution": "10m", "res_sec": 600}
+    {"name": "BTC", "symbol": "BTCUSD", "resolution": "5", "res_sec": 300, "interval_label": "5m"},
+    {"name": "XRP", "symbol": "XRPUSD", "resolution": "10", "res_sec": 600, "interval_label": "10m"}
 ]
 # =================================================
 
@@ -31,7 +31,6 @@ def send_telegram_alert(message):
 
 def fetch_delta_candles(symbol, resolution, res_sec):
     now = int(time.time())
-    # FLAW FIXED: Fetching 1000 candles for exact TradingView ATR/RMA math match
     start = now - (1000 * res_sec)
     
     url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}"
@@ -70,7 +69,6 @@ def calculate_supertrend(candles):
             tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
             tr_list.append(tr)
 
-    # Wilder's Smoothing (RMA)
     atr = [0.0] * len(candles)
     atr[PERIOD - 1] = sum(tr_list[:PERIOD]) / PERIOD
     for i in range(PERIOD, len(candles)):
@@ -108,7 +106,6 @@ def calculate_supertrend(candles):
         else:
             trend[i] = True if c > upperbands[i] else False
 
-    # Strictly signal on [-2] (Closed Candle)
     return trend[-2], candles[-2]['close']
 
 def run_bot():
@@ -124,6 +121,7 @@ def run_bot():
             sym = pair["symbol"]
             res = pair["resolution"]
             res_sec = pair["res_sec"]
+            label = pair["interval_label"]
 
             try:
                 candles = fetch_delta_candles(sym, res, res_sec)
@@ -134,19 +132,21 @@ def run_bot():
                     if last_candle_times.get(name) != current_candle_time:
                         last_candle_times[name] = current_candle_time
                         trend_text = "BUY (Green)" if current_trend else "SELL (Red)"
-                        print(f"[{name} {res}] Closed: {current_close} | Trend: {trend_text}", flush=True)
+                        print(f"[{name} {label}] Closed: {current_close} | Trend: {trend_text}", flush=True)
 
                         prev_trend = last_trends.get(name)
                         if prev_trend is not None and current_trend != prev_trend:
                             if current_trend:
-                                msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {res}\nPrice: {current_close}"
+                                msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {label}\nPrice: {current_close}"
                             else:
-                                msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {res}\nPrice: {current_close}"
+                                msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {label}\nPrice: {current_close}"
                             
                             print(f">>> SIGNAL FIRED: {msg} <<<", flush=True)
                             send_telegram_alert(msg)
 
                         last_trends[name] = current_trend
+                else:
+                    print(f"Waiting for candles on {name}...", flush=True)
             except Exception as e:
                 print(f"Loop Error ({name}): {e}", flush=True)
 
