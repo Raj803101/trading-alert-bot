@@ -16,8 +16,18 @@ PERIOD = 10
 MULTIPLIER = 3.0
 
 PAIRS = [
-    {"name": "BTC", "symbols": ["BTCUSD", "BTCUSDT", "BTC_USDT"], "resolution": "5m", "res_sec": 300},
-    {"name": "XRP", "symbols": ["XRPUSD", "XRPUSDT", "XRP_USDT"], "resolution": "5m", "res_sec": 300}
+    {
+        "name": "BTC", 
+        "symbols": ["BTCUSDT", "BTCUSD", "BTC_USDT"], 
+        "resolution": "5m", 
+        "res_sec": 300
+    },
+    {
+        "name": "XRP", 
+        "symbols": ["XRPUSDT", "XRP_USDT", "XRPUSD", "XRP-PERP"], 
+        "resolution": "5m", 
+        "res_sec": 300
+    }
 ]
 # =================================================
 
@@ -57,7 +67,7 @@ def fetch_delta_candles(symbol_list, resolution, res_sec):
                         "low": float(c["low"]),
                         "close": float(c["close"])
                     } for c in res]
-        except Exception as e:
+        except Exception:
             pass
 
     return None, []
@@ -98,7 +108,7 @@ def calculate_supertrend(candles):
 
 def run_bot():
     print(">>> Multi-Symbol Sync Engine Online <<<", flush=True)
-    send_telegram_alert("🟢 Bot Engine Synced (Auto-Pair Detection Active)")
+    send_telegram_alert("🟢 Bot Engine Synced (BTC & XRP Tracking Active)")
     
     last_trends = {}
     last_times = {}
