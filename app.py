@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Delta Supertrend Live 24/7!"
+    return "Delta Supertrend Bot Live!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
@@ -16,8 +16,8 @@ PERIOD = 10
 MULTIPLIER = 3.0
 
 PAIRS = [
-    {"name": "BTC", "symbol": "BTCUSD", "resolution": "5m"},
-    {"name": "XRP", "symbol": "XRPUSD", "resolution": "5m"}
+    {"name": "BTC", "symbol": "BTCUSD", "resolution": "5m", "res_sec": 300},
+    {"name": "XRP", "symbol": "XRPUSD", "resolution": "5m", "res_sec": 300}
 ]
 # =================================================
 
@@ -28,12 +28,25 @@ def send_telegram_alert(message):
     except Exception:
         pass
 
-def fetch_delta_candles(symbol, resolution):
-    url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+def fetch_delta_candles(symbol, resolution, res_sec):
+    now = int(time.time())
+    # Delta V2 needs valid start & end timestamps (fetching last 120 candles)
+    start = now - (120 * res_sec)
+    
+    url = f"https://api.delta.exchange/v2/history/candles"
+    params = {
+        "resolution": resolution,
+        "symbol": symbol,
+        "start": str(start),
+        "end": str(now)
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json"
+    }
     
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(url, params=params, headers=headers, timeout=10)
         if r.status_code == 200:
             res = r.json().get("result", [])
             if res and len(res) >= 20:
@@ -45,9 +58,9 @@ def fetch_delta_candles(symbol, resolution):
                     "close": float(c["close"])
                 } for c in res]
             else:
-                print(f"[{symbol}] API returned empty or small list: {len(res)} items", flush=True)
+                print(f"[{symbol}] Empty list returned", flush=True)
         else:
-            print(f"API Error ({symbol}): {r.status_code}", flush=True)
+            print(f"API Error ({symbol}): {r.status_code} - {r.text}", flush=True)
     except Exception as e:
         print(f"Fetch Error ({symbol}): {e}", flush=True)
     
@@ -83,6 +96,8 @@ def calculate_supertrend(candles):
         lowerbands[i] = lb if lb > lowerbands[i-1] or prev_c < lowerbands[i-1] else lowerbands[i-1]
 
         if trend[i-1]:
+            trend[i] = False if c < lowerbands[i]:
+                pass
             trend[i] = False if c < lowerbands[i] else True
         else:
             trend[i] = True if c > upperbands[i] else False
@@ -91,8 +106,8 @@ def calculate_supertrend(candles):
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Delta Native Bot (Clean Fetch) Started <<<", flush=True)
-    send_telegram_alert("🟢 Bot Active: Tracking Delta BTC 5m & XRP 5m!")
+    print(">>> Delta Native Bot (Param Fixed) Started <<<", flush=True)
+    send_telegram_alert("🟢 Delta Bot Active: Tracking BTC 5m & XRP 5m!")
     
     last_trends = {}
     last_times = {}
@@ -100,7 +115,7 @@ def run_bot():
     while True:
         for p in PAIRS:
             try:
-                candles = fetch_delta_candles(p["symbol"], p["resolution"])
+                candles = fetch_delta_candles(p["symbol"], p["resolution"], p["res_sec"])
                 if candles:
                     c_time = candles[-2]['time']
                     c_trend, c_close = calculate_supertrend(candles)
