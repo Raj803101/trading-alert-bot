@@ -15,10 +15,10 @@ CHANNEL_ID = "@theshopcare"
 PERIOD = 10
 MULTIPLIER = 3.0
 
-# BLUNDER FIXED: Delta strictly needs "5m" and "10m" string, not just integers.
+# XRP ko strictly 5m par set kar diya gaya hai (Delta API error fix)
 PAIRS = [
     {"name": "BTC", "symbol": "BTCUSD", "resolution": "5m", "res_sec": 300},
-    {"name": "XRP", "symbol": "XRPUSD", "resolution": "10m", "res_sec": 600}
+    {"name": "XRP", "symbol": "XRPUSD", "resolution": "5m", "res_sec": 300}
 ]
 # =================================================
 
@@ -31,7 +31,8 @@ def send_telegram_alert(message):
 
 def fetch_delta_candles(symbol, resolution, res_sec):
     now = int(time.time())
-    start = now - (300 * res_sec) # 300 candles to perfectly sync TradingView Supertrend math
+    # Safe limit (200 candles) taaki "Waiting for BTC" wala API timeout issue na ho
+    start = now - (200 * res_sec) 
     
     url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}"
     
@@ -43,7 +44,6 @@ def fetch_delta_candles(symbol, resolution, res_sec):
                 res = sorted(res, key=lambda x: int(x["time"]))
                 return [{"time": int(c["time"]), "high": float(c["high"]), "low": float(c["low"]), "close": float(c["close"])} for c in res]
         else:
-            # Agar ab fail hua toh error message saaf print hoga logs me
             print(f"API Error ({symbol}): {r.status_code} - {r.text}", flush=True)
     except Exception as e:
         print(f"Fetch Error ({symbol}): {e}", flush=True)
@@ -85,8 +85,8 @@ def calculate_supertrend(candles):
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Bot Started with FIXED Resolution Strings <<<", flush=True)
-    send_telegram_alert("🟢 Bot Finally Fixed: Error resolved, tracking real-time prices!")
+    print(">>> Bot Started (BTC 5m & XRP 5m) <<<", flush=True)
+    send_telegram_alert("🟢 Bot Fixed: Active on BTC 5m & XRP 5m!")
     
     last_trends = {}
     last_times = {}
