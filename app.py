@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Delta Supertrend Bot Live!"
+    return "Delta Supertrend Bot Live 24/7!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
@@ -30,18 +30,17 @@ def send_telegram_alert(message):
 
 def fetch_delta_candles(symbol, resolution, res_sec):
     now = int(time.time())
-    # Delta V2 needs valid start & end timestamps (fetching last 120 candles)
     start = now - (120 * res_sec)
     
-    url = f"https://api.delta.exchange/v2/history/candles"
+    url = "https://api.delta.exchange/v2/history/candles"
     params = {
         "resolution": resolution,
         "symbol": symbol,
-        "start": str(start),
-        "end": str(now)
+        "start": start,
+        "end": now
     }
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "User-Agent": "Mozilla/5.0",
         "Accept": "application/json"
     }
     
@@ -58,7 +57,7 @@ def fetch_delta_candles(symbol, resolution, res_sec):
                     "close": float(c["close"])
                 } for c in res]
             else:
-                print(f"[{symbol}] Empty list returned", flush=True)
+                print(f"[{symbol}] API returned empty or small list", flush=True)
         else:
             print(f"API Error ({symbol}): {r.status_code} - {r.text}", flush=True)
     except Exception as e:
@@ -96,8 +95,6 @@ def calculate_supertrend(candles):
         lowerbands[i] = lb if lb > lowerbands[i-1] or prev_c < lowerbands[i-1] else lowerbands[i-1]
 
         if trend[i-1]:
-            trend[i] = False if c < lowerbands[i]:
-                pass
             trend[i] = False if c < lowerbands[i] else True
         else:
             trend[i] = True if c > upperbands[i] else False
@@ -106,7 +103,7 @@ def calculate_supertrend(candles):
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Delta Native Bot (Param Fixed) Started <<<", flush=True)
+    print(">>> Delta Native Bot Started (BTC 5m & XRP 5m) <<<", flush=True)
     send_telegram_alert("🟢 Delta Bot Active: Tracking BTC 5m & XRP 5m!")
     
     last_trends = {}
@@ -133,8 +130,6 @@ def run_bot():
                             print(f">>> SIGNAL FIRED: {msg} <<<", flush=True)
 
                         last_trends[p["name"]] = c_trend
-                else:
-                    print(f"Waiting for {p['name']}...", flush=True)
             except Exception as e:
                 print(f"Loop Error ({p['name']}): {e}", flush=True)
             
