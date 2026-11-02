@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Delta Exchange Supertrend Multi-Bot is Running 24/7!"
+    return "Delta Exchange Supertrend Pro is Running 24/7!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
@@ -25,62 +25,38 @@ def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHANNEL_ID, "text": message}
     try:
-        res = requests.post(url, json=payload, timeout=10)
-        print(f"Telegram alert sent: {res.status_code}", flush=True)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Telegram error: {e}", flush=True)
 
 def fetch_delta_candles(symbol, resolution, res_sec):
     now = int(time.time())
-    start = now - (150 * res_sec)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept": "application/json"
-    }
-
-    symbol_variants = [symbol, symbol.replace("USD", "_USDT"), f"{symbol}T"]
+    # FLAW FIXED: Fetching 1000 candles for exact TradingView ATR/RMA math match
+    start = now - (1000 * res_sec)
     
-    for sym in symbol_variants:
-        try:
-            url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={sym}&start={start}&end={now}"
-            r = requests.get(url, headers=headers, timeout=8)
-            if r.status_code == 200:
-                result = r.json().get("result", [])
-                if result and len(result) >= PERIOD + 5:
-                    result = sorted(result, key=lambda x: x["time"])
-                    candles = [{
-                        "time": c["time"],
-                        "high": float(c["high"]),
-                        "low": float(c["low"]),
-                        "close": float(c["close"])
-                    } for c in result]
-                    return candles
-        except Exception as e:
-            pass
-
-    # Global unblocked fallback
+    url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
     try:
-        bybit_res = "5" if resolution == "5m" else "15"
-        bybit_sym = "BTCUSDT" if "BTC" in symbol else "XRPUSDT"
-        url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={bybit_sym}&interval={bybit_res}&limit=120"
-        r = requests.get(url, timeout=8).json()
-        raw_list = r.get("result", {}).get("list", [])
-        if raw_list and len(raw_list) >= PERIOD + 5:
-            raw_list = sorted(raw_list, key=lambda x: int(x[0]))
-            candles = [{
-                "time": int(c[0]) // 1000,
-                "high": float(c[2]),
-                "low": float(c[3]),
-                "close": float(c[4])
-            } for c in raw_list]
-            return candles
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            result = r.json().get("result", [])
+            if result and len(result) >= 300:
+                result = sorted(result, key=lambda x: int(x["time"]))
+                candles = [{
+                    "time": int(c["time"]),
+                    "high": float(c["high"]),
+                    "low": float(c["low"]),
+                    "close": float(c["close"])
+                } for c in result]
+                return candles
     except Exception as e:
-        pass
-
+        print(f"Delta API error ({symbol}): {e}", flush=True)
+        
     return []
 
 def calculate_supertrend(candles):
-    if len(candles) < PERIOD + 2:
+    if len(candles) < PERIOD + 100:
         return None, None
 
     tr_list = []
@@ -94,6 +70,7 @@ def calculate_supertrend(candles):
             tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
             tr_list.append(tr)
 
+    # Wilder's Smoothing (RMA)
     atr = [0.0] * len(candles)
     atr[PERIOD - 1] = sum(tr_list[:PERIOD]) / PERIOD
     for i in range(PERIOD, len(candles)):
@@ -131,18 +108,19 @@ def calculate_supertrend(candles):
         else:
             trend[i] = True if c > upperbands[i] else False
 
+    # Strictly signal on [-2] (Closed Candle)
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> 24/7 Delta Supertrend Engine Online <<<", flush=True)
-    send_telegram_alert("🟢 Delta Supertrend Bot Live & Active (BTC 5m & XRP 10m)!")
+    print(">>> Supertrend Bot (1000-Candle Pro Math) Started <<<", flush=True)
+    send_telegram_alert("🟢 Bot Restarted: Supertrend Math perfectly synced with Delta Chart!")
     
     last_trends = {}
     last_candle_times = {}
 
     while True:
         for pair in PAIRS:
-            pair_name = pair["name"]
+            name = pair["name"]
             sym = pair["symbol"]
             res = pair["resolution"]
             res_sec = pair["res_sec"]
@@ -153,31 +131,28 @@ def run_bot():
                     current_candle_time = candles[-2]['time']
                     current_trend, current_close = calculate_supertrend(candles)
 
-                    if last_candle_times.get(pair_name) != current_candle_time:
-                        last_candle_times[pair_name] = current_candle_time
-                        trend_label = "BUY (Green)" if current_trend else "SELL (Red)"
-                        print(f"[{pair_name} {res}] Close: {current_close} | Trend: {trend_label}", flush=True)
+                    if last_candle_times.get(name) != current_candle_time:
+                        last_candle_times[name] = current_candle_time
+                        trend_text = "BUY (Green)" if current_trend else "SELL (Red)"
+                        print(f"[{name} {res}] Closed: {current_close} | Trend: {trend_text}", flush=True)
 
-                        prev_trend = last_trends.get(pair_name)
+                        prev_trend = last_trends.get(name)
                         if prev_trend is not None and current_trend != prev_trend:
                             if current_trend:
                                 msg = f"🟢 SUPERTREND BUY SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {res}\nPrice: {current_close}"
                             else:
                                 msg = f"🔴 SUPERTREND SELL SIGNAL\nExchange: Delta\nPair: {sym}\nInterval: {res}\nPrice: {current_close}"
                             
-                            print(f">>> SIGNAL SENT: {msg} <<<", flush=True)
+                            print(f">>> SIGNAL FIRED: {msg} <<<", flush=True)
                             send_telegram_alert(msg)
 
-                        last_trends[pair_name] = current_trend
-                else:
-                    print(f"Waiting for candles on {pair_name}...", flush=True)
-
+                        last_trends[name] = current_trend
             except Exception as e:
-                print(f"Loop error on {pair_name}: {e}", flush=True)
+                print(f"Loop Error ({name}): {e}", flush=True)
 
             time.sleep(2)
 
-        time.sleep(20)
+        time.sleep(15)
 
 threading.Thread(target=run_bot, daemon=True).start()
 
