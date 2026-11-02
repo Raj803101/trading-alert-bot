@@ -29,7 +29,6 @@ def send_telegram_alert(message):
         pass
 
 def fetch_delta_candles(symbol, resolution):
-    # start aur end hatakar direct latest candles mangwayi ja rahi hain
     url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -50,3 +49,85 @@ def fetch_delta_candles(symbol, resolution):
         else:
             print(f"API Error ({symbol}): {r.status_code}", flush=True)
     except Exception as e:
+        print(f"Fetch Error ({symbol}): {e}", flush=True)
+    
+    return []
+
+def calculate_supertrend(candles):
+    if len(candles) < PERIOD + 5:
+        return None, None
+
+    # True Range (TR)
+    tr = [0.0] * len(candles)
+    for i in range(1, len(candles)):
+        h, l, pc = candles[i]['high'], candles[i]['low'], candles[i-1]['close']
+        tr[i] = max(h - l, abs(h - pc), abs(l - pc))
+
+    # Wilder's Smoothing Math (TradingView Exact RMA)
+    atr = [0.0] * len(candles)
+    atr[PERIOD] = sum(tr[1:PERIOD+1]) / PERIOD
+    for i in range(PERIOD + 1, len(candles)):
+        atr[i] = (atr[i - 1] * (PERIOD - 1) + tr[i]) / PERIOD
+
+    upperbands = [0.0] * len(candles)
+    lowerbands = [0.0] * len(candles)
+    trend = [True] * len(candles)
+
+    for i in range(PERIOD, len(candles)):
+        hl2 = (candles[i]['high'] + candles[i]['low']) / 2.0
+        ub = hl2 + (MULTIPLIER * atr[i])
+        lb = hl2 - (MULTIPLIER * atr[i])
+        c, prev_c = candles[i]['close'], candles[i-1]['close']
+        
+        upperbands[i] = ub if ub < upperbands[i-1] or prev_c > upperbands[i-1] else upperbands[i-1]
+        lowerbands[i] = lb if lb > lowerbands[i-1] or prev_c < lowerbands[i-1] else lowerbands[i-1]
+
+        if trend[i-1]:
+            trend[i] = False if c < lowerbands[i] else True
+        else:
+            trend[i] = True if c > upperbands[i] else False
+
+    # Strictly signal on [-2] (Closed Candle)
+    return trend[-2], candles[-2]['close']
+
+def run_bot():
+    print(">>> Delta Native Bot (Clean Fetch) Started <<<", flush=True)
+    send_telegram_alert("🟢 Bot Active: Tracking Delta BTC 5m & XRP 5m!")
+    
+    last_trends = {}
+    last_times = {}
+
+    while True:
+        for p in PAIRS:
+            try:
+                candles = fetch_delta_candles(p["symbol"], p["resolution"])
+                if candles:
+                    c_time = candles[-2]['time']
+                    c_trend, c_close = calculate_supertrend(candles)
+
+                    if last_times.get(p["name"]) != c_time:
+                        last_times[p["name"]] = c_time
+                        t_str = "BUY (Green)" if c_trend else "SELL (Red)"
+                        print(f"[{p['name']} {p['resolution']}] Close: {c_close} | Trend: {t_str}", flush=True)
+
+                        p_trend = last_trends.get(p["name"])
+                        if p_trend is not None and c_trend != p_trend:
+                            tag = "🟢 SUPERTREND BUY SIGNAL" if c_trend else "🔴 SUPERTREND SELL SIGNAL"
+                            msg = f"{tag}\nExchange: Delta\nPair: {p['symbol']}\nInterval: {p['resolution']}\nPrice: {c_close}"
+                            send_telegram_alert(msg)
+                            print(f">>> SIGNAL FIRED: {msg} <<<", flush=True)
+
+                        last_trends[p["name"]] = c_trend
+                else:
+                    print(f"Waiting for {p['name']}...", flush=True)
+            except Exception as e:
+                print(f"Loop Error ({p['name']}): {e}", flush=True)
+            
+            time.sleep(2)
+        
+        time.sleep(15)
+
+threading.Thread(target=run_bot, daemon=True).start()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
