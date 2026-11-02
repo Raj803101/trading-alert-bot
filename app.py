@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Delta Supertrend Bot Live 24/7!"
+    return "Delta Supertrend Bot (BTC 5m & SOL 15m) Running 24/7!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
@@ -17,16 +17,16 @@ MULTIPLIER = 3.0
 
 PAIRS = [
     {
-        "name": "BTC", 
-        "symbols": ["BTCUSDT", "BTCUSD", "BTC_USDT"], 
-        "resolution": "5m", 
+        "name": "BTC",
+        "symbols": ["BTCUSDT", "BTCUSD"],
+        "resolution": "5m",
         "res_sec": 300
     },
     {
-        "name": "XRP", 
-        "symbols": ["XRPUSDT", "XRP_USDT", "XRPUSD", "XRP-PERP"], 
-        "resolution": "5m", 
-        "res_sec": 300
+        "name": "SOL",
+        "symbols": ["SOLUSD", "SOLUSDT"],
+        "resolution": "15m",
+        "res_sec": 900
     }
 ]
 # =================================================
@@ -76,11 +76,13 @@ def calculate_supertrend(candles):
     if len(candles) < PERIOD + 2:
         return None, None
 
+    # True Range (TR)
     tr = [0.0] * len(candles)
     for i in range(1, len(candles)):
         h, l, pc = candles[i]['high'], candles[i]['low'], candles[i-1]['close']
         tr[i] = max(h - l, abs(h - pc), abs(l - pc))
 
+    # Wilder's Smoothing Math (TradingView Exact RMA)
     atr = [0.0] * len(candles)
     atr[PERIOD] = sum(tr[1:PERIOD+1]) / PERIOD
     for i in range(PERIOD + 1, len(candles)):
@@ -104,11 +106,12 @@ def calculate_supertrend(candles):
         else:
             trend[i] = True if c > upperbands[i] else False
 
+    # Strictly signal on [-2] (Closed Candle)
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Multi-Symbol Sync Engine Online <<<", flush=True)
-    send_telegram_alert("🟢 Bot Engine Synced (BTC & XRP Tracking Active)")
+    print(">>> Delta Native Engine Online (BTC 5m & SOL 15m) <<<", flush=True)
+    send_telegram_alert("🟢 Delta Bot Active: Tracking BTC 5m & SOL 15m!")
     
     last_trends = {}
     last_times = {}
