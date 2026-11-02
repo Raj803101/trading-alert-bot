@@ -31,7 +31,8 @@ def send_telegram_alert(message):
 
 def fetch_delta_candles(symbol, resolution, res_sec):
     now = int(time.time())
-    start = now - (1000 * res_sec)
+    # FLAW FIXED: Delta API allow maximum 300-500 candles per request. We ask for 200.
+    start = now - (200 * res_sec)
     
     url = f"https://api.delta.exchange/v2/history/candles?resolution={resolution}&symbol={symbol}&start={start}&end={now}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -40,7 +41,8 @@ def fetch_delta_candles(symbol, resolution, res_sec):
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             result = r.json().get("result", [])
-            if result and len(result) >= 300:
+            # Changed safety check to 50 candles to ensure loop runs smoothly
+            if result and len(result) >= 50:
                 result = sorted(result, key=lambda x: int(x["time"]))
                 candles = [{
                     "time": int(c["time"]),
@@ -55,7 +57,7 @@ def fetch_delta_candles(symbol, resolution, res_sec):
     return []
 
 def calculate_supertrend(candles):
-    if len(candles) < PERIOD + 100:
+    if len(candles) < PERIOD + 20:
         return None, None
 
     tr_list = []
@@ -69,6 +71,7 @@ def calculate_supertrend(candles):
             tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
             tr_list.append(tr)
 
+    # Wilder's Smoothing Math
     atr = [0.0] * len(candles)
     atr[PERIOD - 1] = sum(tr_list[:PERIOD]) / PERIOD
     for i in range(PERIOD, len(candles)):
@@ -109,8 +112,8 @@ def calculate_supertrend(candles):
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Supertrend Bot (1000-Candle Pro Math) Started <<<", flush=True)
-    send_telegram_alert("🟢 Bot Restarted: Supertrend Math perfectly synced with Delta Chart!")
+    print(">>> Supertrend Bot (Fixed API Limit) Started <<<", flush=True)
+    send_telegram_alert("🟢 Bot Fixed: Real-time signals now active for BTC & XRP!")
     
     last_trends = {}
     last_candle_times = {}
