@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Delta Supertrend Bot (BTC 5m & SOL 15m) Running 24/7!"
+    return "Delta Supertrend Bot (BTC 5m & SOL 15m) Live 24/7!"
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = "9052629155:AAHWJhy0xfQUWH5s2WSIe--Z7fT_mXYUU1I"
@@ -18,7 +18,7 @@ MULTIPLIER = 3.0
 PAIRS = [
     {
         "name": "BTC",
-        "symbols": ["BTCUSDT", "BTCUSD"],
+        "symbols": ["BTCUSD", "BTCUSDT"],
         "resolution": "5m",
         "res_sec": 300
     },
@@ -40,7 +40,7 @@ def send_telegram_alert(message):
 
 def fetch_delta_candles(symbol_list, resolution, res_sec):
     now = int(time.time())
-    start = now - (100 * res_sec)
+    start = now - (80 * res_sec)
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json"
@@ -59,7 +59,7 @@ def fetch_delta_candles(symbol_list, resolution, res_sec):
             if r.status_code == 200:
                 data = r.json()
                 res = data.get("result", [])
-                if isinstance(res, list) and len(res) >= 15:
+                if isinstance(res, list) and len(res) >= 20:
                     res = sorted(res, key=lambda x: int(x["time"]))
                     return sym, [{
                         "time": int(c["time"]),
@@ -82,7 +82,7 @@ def calculate_supertrend(candles):
         h, l, pc = candles[i]['high'], candles[i]['low'], candles[i-1]['close']
         tr[i] = max(h - l, abs(h - pc), abs(l - pc))
 
-    # Wilder's Smoothing Math (TradingView Exact RMA)
+    # Wilder's Smoothing (TradingView Exact RMA)
     atr = [0.0] * len(candles)
     atr[PERIOD] = sum(tr[1:PERIOD+1]) / PERIOD
     for i in range(PERIOD + 1, len(candles)):
@@ -106,12 +106,12 @@ def calculate_supertrend(candles):
         else:
             trend[i] = True if c > upperbands[i] else False
 
-    # Strictly signal on [-2] (Closed Candle)
+    # Strictly Closed Candle [-2]
     return trend[-2], candles[-2]['close']
 
 def run_bot():
-    print(">>> Delta Native Engine Online (BTC 5m & SOL 15m) <<<", flush=True)
-    send_telegram_alert("🟢 Delta Bot Active: Tracking BTC 5m & SOL 15m!")
+    print(">>> Delta Native Engine (BTC 5m & SOL 15m) Started <<<", flush=True)
+    send_telegram_alert("🟢 Delta Bot Live: BTC 5m & SOL 15m Synced!")
     
     last_trends = {}
     last_times = {}
@@ -137,8 +137,6 @@ def run_bot():
                             print(f">>> SIGNAL SENT: {msg} <<<", flush=True)
 
                         last_trends[p["name"]] = c_trend
-                else:
-                    print(f"Syncing candles for {p['name']}...", flush=True)
             except Exception as e:
                 print(f"Error ({p['name']}): {e}", flush=True)
             
